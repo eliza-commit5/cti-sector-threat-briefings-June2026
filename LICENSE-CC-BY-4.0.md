@@ -1,7 +1,7 @@
 # License for written content (CC BY 4.0)
 
 The written briefings and reports in this repository — including `README.md`
-and all files under `reports/` — are licensed under the
+and all files under `Reports/` — are licensed under the
 **Creative Commons Attribution 4.0 International License (CC BY 4.0)**.
 
 ## You are free to
