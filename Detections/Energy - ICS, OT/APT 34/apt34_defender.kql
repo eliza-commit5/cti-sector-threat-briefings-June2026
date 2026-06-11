@@ -1,0 +1,100 @@
+// =============================================================================
+// APT34 / OilRig (MOIS) — Microsoft Defender XDR / Sentinel KQL
+// Tracked as: OilRig, Helix Kitten, Earth Simnavaz, Cobalt Gypsy, GreenBug
+// Signature tradecraft: DNS-tunneling C2, Exchange/EWS email C2, passive IIS
+// backdoors/webshells, .NET backdoors via double-extension lures.
+// Author: Eliza - eliza-commit5
+// Sources: Check Point (Veaty/Spearal 2024); Fortinet (Saitama 2022);
+//          ESET/Symantec (IIS Group2/GreenBug); MITRE G0049.
+// =============================================================================
+
+
+// -----------------------------------------------------------------------------
+// 1. KNOWN C2 INDICATORS (RETRO-HUNT)   <-- optionally ADD VERIFIED HASHES
+//    Spearal default domain iqwebservice[.]com; Veaty fake host
+//    mail.miicrosoft[.]com (typo-squat); Saitama roots.
+// -----------------------------------------------------------------------------
+let c2_domains = dynamic(["iqwebservice.com","mail.miicrosoft.com","asiaworldremit.com","joexpediagroup.com"]);
+let apt34_hashes = dynamic([ /* "PASTE_SHA256_FROM_CHECKPOINT_APPENDIX" */ ]);
+union
+( DeviceNetworkEvents
+  | where Timestamp > ago(180d)
+  | where RemoteUrl has_any (c2_domains) or tostring(AdditionalFields) has_any (c2_domains)
+  | project Timestamp, DeviceName, RemoteUrl, RemoteIP, RemotePort, InitiatingProcessFileName ),
+( union DeviceFileEvents, DeviceProcessEvents
+  | where Timestamp > ago(180d)
+  | where SHA256 in (apt34_hashes)
+  | project Timestamp, DeviceName, FileName, FolderPath, SHA256, InitiatingProcessCommandLine )
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 2. DNS TUNNELING — long subdomains / TXT-heavy resolution (BEHAVIORAL)
+//    Spearal/Saitama encode data in DNS labels. Endpoint DNS via
+//    DeviceNetworkEvents.RemoteUrl; richer with Sentinel DnsEvents.
+// -----------------------------------------------------------------------------
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where isnotempty(RemoteUrl)
+| extend host = tostring(RemoteUrl)
+| extend labels = split(host, ".")
+| extend longestLabel = toint(arraymax(extract_all(@"([^.]+)", host)
+        | extend l = strlen(tostring(1))))  // see note: simplify if needed
+| extend parent = strcat(tostring(labels[array_length(labels)-2]), ".", tostring(labels[array_length(labels)-1]))
+| where strlen(host) > 60
+| summarize Count = count(), Unique = dcount(host),
+            FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by DeviceName, parent
+| where Unique > 50
+| sort by Unique desc
+// NOTE: the arraymax/strlen line is environment-finicky; the durable filter is
+// strlen(host) > 60 plus a high count of unique subdomains under one parent.
+
+
+// -----------------------------------------------------------------------------
+// 3. EXCHANGE / EWS EMAIL C2 — Veaty tradecraft (BEHAVIORAL)
+//    Non-Outlook processes calling the EWS endpoint, and new inbox rules that
+//    funnel mail to a folder (C2 mailbox prep).
+// -----------------------------------------------------------------------------
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemoteUrl has "/EWS/Exchange.asmx"
+| where InitiatingProcessFileName !in~ ("outlook.exe","msteams.exe","onenote.exe","w3wp.exe","Microsoft.Exchange.RpcClientAccess.Service.exe")
+| project Timestamp, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP
+| sort by Timestamp desc
+// Companion (M365/Exchange audit via Sentinel):
+//   OfficeActivity | where Operation in ("New-InboxRule","Set-InboxRule","UpdateInboxRules")
+
+
+// -----------------------------------------------------------------------------
+// 4. IIS / WEBSHELL BACKDOOR — w3wp.exe spawning a shell (BEHAVIORAL)
+//    TwoFace / RGDoor / CacheHttp.dll. The reliable tell: IIS worker spawning
+//    a command interpreter or recon utility.
+// -----------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where InitiatingProcessFileName =~ "w3wp.exe"
+| where FileName in~ ("cmd.exe","powershell.exe","pwsh.exe","net.exe","net1.exe","whoami.exe","nltest.exe","cscript.exe","systeminfo.exe")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 5. DELIVERY & PERSISTENCE — Veaty/Spearal loader artifacts (BEHAVIORAL)
+//    Loader drops to C:\ProgramData\System Documents\FortiClients.exe and sets
+//    HKCU Run value "Forti Startup". Also catches double-extension execution.
+// -----------------------------------------------------------------------------
+union
+( DeviceFileEvents
+  | where Timestamp > ago(30d)
+  | where FolderPath has @"\ProgramData\System Documents\"
+  | project Timestamp, DeviceName, ActionType, FileName, FolderPath, SHA256, InitiatingProcessCommandLine ),
+( DeviceRegistryEvents
+  | where Timestamp > ago(30d)
+  | where RegistryKey has @"\CurrentVersion\Run"
+  | where RegistryValueName has "Forti Startup" or RegistryValueData has "FortiClients.exe"
+  | project Timestamp, DeviceName, ActionType, RegistryKey, RegistryValueName, RegistryValueData ),
+( DeviceProcessEvents
+  | where Timestamp > ago(30d)
+  | where FileName matches regex @"(?i)\.(pdf|docx|xlsx|doc)\.(exe|scr|rar|js)$"
+  | project Timestamp, DeviceName, FileName, ProcessCommandLine )
+| sort by Timestamp desc
