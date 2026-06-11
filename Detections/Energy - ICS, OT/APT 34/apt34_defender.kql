@@ -3,7 +3,7 @@
 // Tracked as: OilRig, Helix Kitten, Earth Simnavaz, Cobalt Gypsy, GreenBug
 // Signature tradecraft: DNS-tunneling C2, Exchange/EWS email C2, passive IIS
 // backdoors/webshells, .NET backdoors via double-extension lures.
-// Author: Eliza - eliza-commit5
+// Author: Eliza / eliza-commit5
 // Sources: Check Point (Veaty/Spearal 2024); Fortinet (Saitama 2022);
 //          ESET/Symantec (IIS Group2/GreenBug); MITRE G0049.
 // =============================================================================
