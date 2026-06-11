@@ -39,7 +39,7 @@ rule iocontrol_tampered_upx_elf_heuristic
 {
     meta:
         description = "Heuristic: ELF packed with a tampered-magic UPX variant, as used by IOCONTROL. HIGH FALSE-POSITIVE RISK — triage/retro-hunt only, not endpoint blocking."
-        author      = "[Your Name / Handle]"
+        author      = "Eliza / eliza-commit5"
         date        = "2026-06-11"
         reference   = "https://claroty.com/team82/research/inside-a-new-ot-iot-cyber-weapon-iocontrol"
         actor       = "CyberAv3ngers (IRGC-CEC)"
@@ -75,7 +75,7 @@ rule iocontrol_seed_guid_unpacked_memory
 {
     meta:
         description = "IOCONTROL seed GUID (unpacked/memory only; sample-specific)"
-        author      = "[Your Name / Handle]"
+        author      = "Eliza / eliza-commit5"
         reference   = "https://claroty.com/team82/research/inside-a-new-ot-iot-cyber-weapon-iocontrol"
         confidence  = "medium"
     strings:
