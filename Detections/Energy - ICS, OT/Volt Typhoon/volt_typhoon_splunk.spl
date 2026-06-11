@@ -1,0 +1,121 @@
+```
+==============================================================================
+ Volt Typhoon (VOLTZITE / Vanguard Panda / BRONZE SILHOUETTE) — Splunk SPL
+ PRC state-sponsored pre-positioning in US critical infrastructure (comms,
+ energy, water, transport). Tradecraft = LIVING OFF THE LAND: built-in Windows
+ tools, valid accounts, edge/SOHO-router proxying (KV-botnet). Minimal malware.
+ Author: Eliza / eliza-commit5
+ Sources: CISA AA24-038A & AA23-144A; Microsoft (Volt Typhoon LOTL blog).
+
+ *** READ THIS FIRST ***
+ Almost every command below is ALSO legitimate sysadmin activity (CISA says so
+ explicitly). These are HUNT queries, not turnkey alerts. The signal is in the
+ specific argument combinations, the context (who/where/when), and clustering
+ of several behaviors on one host in a short window. Baseline before alerting.
+ Field model assumes Sysmon + Windows Security logs. Adjust to your environment.
+==============================================================================
+```
+
+```
+------------------------------------------------------------------------------
+ 1. NETSH PORTPROXY — LOTL internal proxy (HIGH-VALUE)
+    1a. Process creation of the portproxy command
+    1b. The resulting registry key (more durable than the command line)
+    CISA: "port proxies are not common for legitimate administration."
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") EventCode=1
+  Image="*\\netsh.exe" CommandLine="*portproxy*" CommandLine="*v4tov4*"
+| table _time host User ParentImage Image CommandLine
+| sort - _time
+
+```  (1b — PortProxy registry key, Sysmon EID 12/13/14)  ```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") (EventCode=12 OR EventCode=13 OR EventCode=14)
+  TargetObject="*\\Services\\PortProxy\\v4tov4\\tcp\\*"
+| table _time host User EventCode TargetObject Details
+| sort - _time
+
+```
+------------------------------------------------------------------------------
+ 2. NTDS.dit THEFT — ntdsutil install-media + ESENT artifacts (HIGH-VALUE)
+    Volt Typhoon uses ntdsutil to create DC installation media (NTDS.dit).
+    Combine the process command with the ESENT Application-log tell.
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") EventCode=1
+  ( (Image="*\\ntdsutil.exe" CommandLine="*create full*")
+    OR (CommandLine="*ntdsutil*" CommandLine="*ac i ntds*")
+    OR (CommandLine="*ntdsutil*" CommandLine="*ifm*") )
+| table _time host User CommandLine
+| sort - _time
+
+```  (2b — ESENT ntds.dit database operations, Application log)  ```
+index=wineventlog source="*Application*" (EventCode=216 OR EventCode=325 OR EventCode=326 OR EventCode=327)
+| table _time host EventCode Message
+| sort - _time
+
+```
+------------------------------------------------------------------------------
+ 3. LSASS CREDENTIAL DUMP via comsvcs.dll MiniDump (HIGH-VALUE)
+    rundll32 invoking the built-in comsvcs MiniDump export against LSASS.
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") EventCode=1
+  CommandLine="*comsvcs*" CommandLine="*MiniDump*"
+| table _time host User ParentImage Image CommandLine
+| sort - _time
+
+```
+------------------------------------------------------------------------------
+ 4. PowerShell SECURITY-LOG LOGON ENUMERATION (BEHAVIORAL)
+    Volt Typhoon queries the Security log for successful logons (4624) to map
+    valid accounts/sessions before reusing credentials.
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") EventCode=1
+  (Image="*\\powershell.exe" OR Image="*\\pwsh.exe")
+  ( (CommandLine="*Get-EventLog*" CommandLine="*security*")
+    OR (CommandLine="*Get-WinEvent*" CommandLine="*4624*")
+    OR (CommandLine="*-InstanceId 4624*") )
+| table _time host User CommandLine
+| sort - _time
+
+```
+------------------------------------------------------------------------------
+ 5. DISCOVERY BURST — multiple native recon commands on one host (BEHAVIORAL)
+    Any single command is benign; a cluster in a short window from one user is
+    the signal. Tune the threshold and exclude known admin/jump hosts.
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") EventCode=1
+  ( Image IN ("*\\net.exe","*\\net1.exe","*\\ipconfig.exe","*\\systeminfo.exe",
+              "*\\tasklist.exe","*\\netstat.exe","*\\nltest.exe","*\\query.exe",
+              "*\\whoami.exe","*\\quser.exe")
+    OR (Image="*\\wmic.exe" CommandLine="*logicaldisk*") )
+| bin _time span=30m
+| stats dc(Image) as distinct_recon_tools values(Image) as tools
+        values(CommandLine) as cmds by host User _time
+| where distinct_recon_tools >= 4
+| sort - distinct_recon_tools
+
+```
+------------------------------------------------------------------------------
+ 6. CUSTOM FRP / Impacket C2 hashes (RETRO-HUNT)  <-- ADD VERIFIED HASHES
+    Microsoft/CISA published SHA-256 hashes for Volt Typhoon custom FRP builds.
+    Paste them into the lookup 'volt_typhoon_hashes.csv' (column: file_hash).
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") EventCode=1
+| eval file_hash=lower(coalesce(SHA256, Hashes))
+| search [ | inputlookup volt_typhoon_hashes.csv | eval file_hash=lower(file_hash) | fields file_hash ]
+| table _time host User Image CommandLine file_hash
+
+```
+ NOTES
+ - 1, 2, 3 are the highest-fidelity (port proxy, NTDS theft, LSASS dump are rare
+   in normal ops). 4, 5 need baselining. 6 churns and needs the hash list.
+ - Enrich detections with sign-in anomalies: valid-account logons from unusual
+   IPs (the KV-botnet proxies SOHO/edge devices) — correlate Security 4624 +
+   VPN logs with rare/foreign source IPs for the same accounts seen above.
+==============================================================================
+```
