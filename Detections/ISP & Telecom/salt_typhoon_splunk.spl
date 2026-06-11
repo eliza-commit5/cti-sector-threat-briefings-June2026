@@ -1,0 +1,115 @@
+```
+==============================================================================
+ Salt Typhoon — Splunk SPL detections
+ Aliases: OPERATOR PANDA, RedMike, Earth Estries, GhostEmperor, FamousSparrow,
+          UNC2286 / UNC5807. PRC state-sponsored espionage vs. telecom/ISP
+          backbones (600+ orgs, 80+ countries; AT&T, Verizon, Lumen, T-Mobile).
+ Author: Eliza / elizacommit5
+ Sources: CISA AA25-239A; Trend Micro "Game of Emperor" (Earth Estries);
+          Cisco Talos; Kaspersky (GhostEmperor/Demodex); ESET (FamousSparrow).
+
+ TWO DETECTION LAYERS:
+   A) NETWORK DEVICES (the core activity) — Cisco IOS XE / edge gear. Needs
+      device syslog/AAA + web logs. This is where Salt Typhoon mostly lives and
+      where most orgs have the least telemetry.
+   B) WINDOWS/LINUX SERVERS — GhostSpider/Demodex/SnappyBee malware + Exchange
+      exploitation. Standard endpoint telemetry applies here.
+ Talos note: in nearly all incidents initial access used STOLEN CREDENTIALS,
+ not exploits — so credential/sign-in anomalies matter as much as CVEs.
+==============================================================================
+```
+
+```
+------------------------------------------------------------------------------
+ A1. IOS XE WEB UI — percent-encoding evasion (NETWORK, HIGH-VALUE)
+     Salt Typhoon obfuscates IOS XE web UI paths, e.g. 'web'->%77eb,
+     'ui'->%75i, 'wsma'->%77sma (and double-encoded %25.. variants).
+------------------------------------------------------------------------------
+```
+index=network OR index=proxy OR index=web OR sourcetype=cisco:ios:http
+  ( uri_query="*%77eb%75i*" OR uri_query="*%77sma*" OR uri_query="*%2577eb%2575i*" OR uri_query="*%2577sma*"
+    OR uri_path="*webui_wsma_http*" OR url="*%77eb%75i*" )
+| stats count min(_time) as first_seen max(_time) as last_seen values(uri_path) as paths by src_ip dest_ip
+| convert ctime(first_seen) ctime(last_seen)
+
+```
+------------------------------------------------------------------------------
+ A2. NETWORK DEVICE CONFIG TAMPERING (NETWORK, HIGH-VALUE)
+     Salt Typhoon modifies ACLs to whitelist its IPs, builds GRE/IPsec tunnels
+     for exfil, enables Guest Shell (Linux container) on IOS XE, and creates
+     priv-15 accounts. Requires config-change command logging on devices.
+------------------------------------------------------------------------------
+```
+index=network (sourcetype=cisco:ios OR sourcetype=cisco:ios:syslog)
+  ( "%SYS-5-CONFIG_I" OR "%PARSER-5-CFGLOG_LOGGEDCMD" OR mnemonic="CFGLOG_LOGGEDCMD" )
+  ( command="*guestshell*" OR command="*access-list*" OR command="*ip access-group*"
+    OR command="*interface Tunnel*" OR command="*tunnel mode gre*" OR command="*crypto*"
+    OR command="*username*privilege 15*" OR command="*aaa *" OR command="*ip http server*" )
+| table _time host user command
+| sort - _time
+
+```
+------------------------------------------------------------------------------
+ A3. AAA / TACACS+ / RADIUS anomalies (NETWORK, BEHAVIORAL)
+     The actor captures TACACS+/RADIUS to steal device credentials and logs in
+     to network gear from internal pivots. Flag device admin auth from hosts
+     that are not sanctioned management stations.
+------------------------------------------------------------------------------
+```
+index=network (sourcetype=cisco:ios OR sourcetype=tacacs OR sourcetype=radius)
+  ("%SEC_LOGIN-5-LOGIN_SUCCESS" OR action=login OR Authen=Succeeded)
+| search NOT [ | inputlookup approved_netadmin_hosts.csv | fields src_ip ]
+| stats count values(host) as devices min(_time) as first_seen max(_time) as last_seen by src_ip user
+| convert ctime(first_seen) ctime(last_seen)
+| sort - count
+
+```
+------------------------------------------------------------------------------
+ B1. KNOWN C2 INDICATORS (RETRO-HUNT)
+     GhostSpider C2 141.255.164[.]98 (active Aug 2024); typo-squat cert SAN
+     'palloaltonetworks[.]com'. Add more from the Trend Micro IOC list.
+------------------------------------------------------------------------------
+```
+(index=dns OR index=proxy OR index=web OR index=network OR index=endpoint)
+  ( dest_ip="141.255.164.98" OR query="*palloaltonetworks*" OR url="*palloaltonetworks*"
+    OR ssl_subject="*palloaltonetworks*" OR tls_subject_alt_name="*palloaltonetworks*" )
+| stats count min(_time) as first_seen max(_time) as last_seen values(query) as q by host src_ip dest_ip
+| convert ctime(first_seen) ctime(last_seen)
+
+```
+------------------------------------------------------------------------------
+ B2. EXCHANGE / EDGE EXPLOITATION -> webshell (WINDOWS, BEHAVIORAL)
+     Initial access often via Ivanti/Fortinet/Sophos/Exchange CVEs. The durable
+     post-exploit tell on Exchange/IIS is the worker spawning a shell.
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") EventCode=1
+  ParentImage="*\\w3wp.exe"
+  Image IN ("*\\cmd.exe","*\\powershell.exe","*\\pwsh.exe","*\\net.exe","*\\whoami.exe","*\\cscript.exe")
+| table _time host User ParentImage Image CommandLine
+| sort - _time
+
+```
+------------------------------------------------------------------------------
+ B3. DEMODEX ROOTKIT / malware hashes (RETRO-HUNT)  <-- ADD VERIFIED HASHES
+     Populate 'salt_typhoon_hashes.csv' (column: file_hash) from Trend Micro,
+     Kaspersky (Demodex), and ESET (SparrowDoor/CrowDoor) IOC appendices.
+     Demodex is a kernel driver — also watch for anomalous service/driver loads.
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") (EventCode=1 OR EventCode=6)
+| eval file_hash=lower(coalesce(SHA256, Hashes, ImageLoaded_hash))
+| search [ | inputlookup salt_typhoon_hashes.csv | eval file_hash=lower(file_hash) | fields file_hash ]
+| table _time host User Image ImageLoaded CommandLine file_hash
+| sort - _time
+
+```
+ NOTES
+ - Layer A (network device) is the heart of Salt Typhoon and the hardest to see:
+   you need config-change logging, web-UI access logs, and AAA logs shipped to
+   Splunk. Without them, A1-A3 are blind.
+ - Pair every host/device hit with a SIGN-IN review: stolen-credential logins
+   from unusual IPs are the most common initial access (Talos).
+ - Replace lookups (approved_netadmin_hosts.csv, salt_typhoon_hashes.csv).
+==============================================================================
+```
