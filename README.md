@@ -11,7 +11,7 @@
 
 Curated cyber threat intelligence briefings covering active campaigns, indicators of compromise (IOCs), and behavioral analysis for the **Energy / ICS-OT**, **ISP / Telecom**, and **Quantum** sectors — plus practical notes on leveraging AI in CTI workflows.
 
-Maintained by **[Your Name / Handle]**. Contributions, corrections, and source links welcome via issues and pull requests.
+Maintained by **Eliza / eliza-commit5**. Contributions, corrections, and source links welcome via issues and pull requests.
 
 ---
 
