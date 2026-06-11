@@ -1,0 +1,82 @@
+// =============================================================================
+// APT41 / Wicked Panda / Brass Typhoon / Earth Baku — Defender XDR / Sentinel KQL
+// China-nexus espionage+crime actor. Quantum-vertical relevance: IP theft vs.
+// high-tech / R&D (incl. quantum). DLL side-loading, signed-binary abuse, supply chain.
+// Author: Eliza / eliza-commit5
+// Sources: Google/Mandiant (DUSTTRAP/DUSTPAN); Cisco Talos (ShadowPad);
+//          Tinexta (KEYPLUG); MITRE G0096.
+// =============================================================================
+
+
+// -----------------------------------------------------------------------------
+// 1. DLL SIDE-LOADING from a signed binary in a non-standard path (HIGH-VALUE)
+//    DUSTTRAP/ShadowPad side-load a malicious DLL next to a legit signed EXE.
+// -----------------------------------------------------------------------------
+DeviceImageLoadEvents
+| where Timestamp > ago(30d)
+| where FolderPath has_any (@"\ProgramData\", @"\Users\Public\", @"\AppData\", @"\Windows\Temp\")
+| where InitiatingProcessFolderPath !has @"\Windows\System32\" and InitiatingProcessFolderPath !has @"\Windows\SysWOW64\"
+| where InitiatingProcessFileName endswith ".exe"
+| project Timestamp, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, FolderPath, FileName, SHA256
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 2. MASQUERADED PROCESS — DUSTPAN named like a system binary (HIGH-VALUE)
+//    w3wp.exe / conn.exe from the wrong path (legit w3wp.exe = \System32\inetsrv\).
+// -----------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where (FileName =~ "w3wp.exe" and FolderPath !has @"\System32\inetsrv\")
+     or FileName =~ "conn.exe"
+| project Timestamp, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 3. CERTUTIL DOWNLOAD/DECODE + free-hosting staging (BEHAVIORAL)
+// -----------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where FileName =~ "certutil.exe"
+| where ProcessCommandLine has_any ("urlcache", "-decode", "-f ", "split")
+| project Timestamp, DeviceName, AccountName, ProcessCommandLine, InitiatingProcessFileName
+| sort by Timestamp desc
+// Companion — egress to free hosting often used by APT41:
+//   DeviceNetworkEvents
+//   | where RemoteUrl has_any ("workers.dev","trycloudflare.com","infinityfree","pages.dev")
+
+
+// -----------------------------------------------------------------------------
+// 4. CLOUD-SERVICE C2 — TOUGHPROGRESS abuses Google Calendar (HUNT)
+//    Non-browser processes reaching Google Calendar / API endpoints.
+// -----------------------------------------------------------------------------
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemoteUrl has_any ("calendar.google.com", "googleapis.com/calendar")
+| where InitiatingProcessFileName !in~ ("chrome.exe","msedge.exe","firefox.exe","outlook.exe","Teams.exe")
+| project Timestamp, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 5. WEB SHELL — web-server worker spawning a shell (BEHAVIORAL)
+// -----------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where InitiatingProcessFileName in~ ("w3wp.exe","httpd.exe","tomcat.exe","java.exe")
+| where FileName in~ ("cmd.exe","powershell.exe","pwsh.exe","certutil.exe","net.exe","whoami.exe")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 6. KNOWN HASHES (RETRO-HUNT)   <-- ADD VERIFIED HASHES
+//    DUSTTRAP / DUSTPAN / KEYPLUG / ShadowPad from Mandiant/Talos/Tinexta.
+// -----------------------------------------------------------------------------
+let apt41_hashes = dynamic([ /* "PASTE_SHA256_FROM_PRIMARY_APPENDICES" */ ]);
+union DeviceProcessEvents, DeviceFileEvents, DeviceImageLoadEvents
+| where Timestamp > ago(180d)
+| where SHA256 in (apt41_hashes)
+| project Timestamp, DeviceName, FileName, FolderPath, SHA256, InitiatingProcessCommandLine
+| sort by Timestamp desc
