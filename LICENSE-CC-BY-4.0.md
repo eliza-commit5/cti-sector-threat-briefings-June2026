@@ -12,7 +12,7 @@ and all files under `reports/` — are licensed under the
 
 ## Under the following terms
 
-- **Attribution** — You must give appropriate credit to **[Your Name / Handle]**,
+- **Attribution** — You must give appropriate credit to **Eliza / eliza-commit5**,
   provide a link to this repository, and indicate if changes were made. You may
   do so in any reasonable manner, but not in any way that suggests the licensor
   endorses you or your use.
