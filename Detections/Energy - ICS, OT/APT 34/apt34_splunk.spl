@@ -1,0 +1,105 @@
+```
+==============================================================================
+ APT34 / OilRig (MOIS) — Splunk SPL detections
+ Tracked as: OilRig, Helix Kitten, Earth Simnavaz, Cobalt Gypsy, GreenBug
+ Signature tradecraft: DNS-tunneling C2, Exchange/EWS email C2, passive IIS
+ backdoors/webshells, .NET backdoors delivered via double-extension lures.
+ Author: Eliza / eliza-commit5
+ Sources: Check Point Research (Veaty/Spearal, 2024); Fortinet (Saitama, 2022);
+          ESET/Symantec (IIS Group2/GreenBug); Trustwave; MITRE G0049.
+ NOTE: adjust index/sourcetype/field names to your environment.
+==============================================================================
+```
+
+```
+------------------------------------------------------------------------------
+ 1. DNS TUNNELING — long / high-entropy subdomains, TXT-heavy (BEHAVIORAL)
+    Spearal/Saitama encode data in DNS subdomains (custom Base32/Base36) and
+    favor TXT records. This is APT34's signature C2. Behavioral — durable.
+    Tune length threshold and exclude known-good CDN/telemetry domains.
+------------------------------------------------------------------------------
+```
+index=dns (record_type=TXT OR query_type=TXT OR answer_type=TXT OR record_type=A)
+| eval q=lower(query)
+| eval parent=mvindex(split(q,"."), -2) . "." . mvindex(split(q,"."), -1)
+| eval longest_label=0
+| eval labels=split(q,".")
+| foreach mode=multivalue labels [ eval longest_label=if(len(<<ITEM>>)>longest_label, len(<<ITEM>>), longest_label) ]
+| where longest_label >= 30
+| stats count dc(q) as unique_queries min(_time) as first_seen max(_time) as last_seen
+        by src_ip parent
+| where unique_queries > 50
+| convert ctime(first_seen) ctime(last_seen)
+| sort - unique_queries
+
+```
+------------------------------------------------------------------------------
+ 2. APT34 known C2 indicators (RETRO-HUNT)
+    Spearal default domain: iqwebservice[.]com
+    Veaty hardcoded fake mail host: mail.miicrosoft[.]com  (typo-squat, two i's)
+    Saitama root domains: asiaworldremit[.]com, joexpediagroup[.]com
+------------------------------------------------------------------------------
+```
+(index=dns OR index=proxy OR index=web OR index=network)
+  ( query="*iqwebservice*" OR query="*miicrosoft*" OR query="*asiaworldremit*" OR query="*joexpediagroup*"
+    OR url="*iqwebservice*" OR url="*miicrosoft*" OR dest="*iqwebservice*" )
+| stats count min(_time) as first_seen max(_time) as last_seen values(query) as queries by host src_ip
+| convert ctime(first_seen) ctime(last_seen)
+
+```
+------------------------------------------------------------------------------
+ 3. EXCHANGE / EWS EMAIL C2 — Veaty tradecraft (BEHAVIORAL)
+    3a. Non-mail-client processes hitting the EWS endpoint /EWS/exchange.asmx
+    3b. New/auto inbox rules that funnel mail to a folder (C2 mailbox prep)
+    Use IIS/Exchange logs for 3a and O365/Exchange admin audit for 3b.
+------------------------------------------------------------------------------
+```
+index=msexchange OR sourcetype=iis cs_uri_stem="*/EWS/Exchange.asmx*"
+| search NOT (cs_User_Agent="*Outlook*" OR cs_User_Agent="*Microsoft Office*" OR cs_User_Agent="*Teams*")
+| stats count values(cs_User_Agent) as agents min(_time) as first_seen max(_time) as last_seen
+        by c_ip cs_username
+| convert ctime(first_seen) ctime(last_seen)
+| sort - count
+
+```  (3b — new inbox rule creation, M365/Exchange audit)  ```
+index=o365 OR index=msexchange (Operation="New-InboxRule" OR Operation="Set-InboxRule" OR Operation="UpdateInboxRules")
+| table _time UserId ClientIP Operation Parameters
+| sort - _time
+
+```
+------------------------------------------------------------------------------
+ 4. IIS / WEBSHELL BACKDOOR — w3wp spawning a shell (BEHAVIORAL)
+    TwoFace / RGDoor / CacheHttp.dll (IIS Group2) give APT34 passive backdoors
+    on Exchange/IIS. The reliable tell: the IIS worker spawning a command shell.
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") EventCode=1
+  ParentImage="*\\w3wp.exe"
+  Image IN ("*\\cmd.exe","*\\powershell.exe","*\\pwsh.exe","*\\net.exe","*\\whoami.exe","*\\cscript.exe","*\\nltest.exe")
+| table _time host User ParentImage Image CommandLine
+| sort - _time
+
+```
+------------------------------------------------------------------------------
+ 5. DELIVERY & PERSISTENCE — Veaty/Spearal loader artifacts (BEHAVIORAL/ATOMIC)
+    PowerShell loader drops to "C:\ProgramData\System Documents\FortiClients.exe"
+    (+ .config) and sets HKCU Run value "Forti Startup". Also flags the
+    double-extension lure pattern (file.pdf.exe / file.docx.rar).
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*")
+  ( (EventCode=11 TargetFilename="*\\ProgramData\\System Documents\\*")
+    OR (EventCode=13 Details="*Forti Startup*")
+    OR (EventCode=13 TargetObject="*\\CurrentVersion\\Run*" Details="*FortiClients.exe*")
+    OR (EventCode=1 (CommandLine="*.pdf.exe*" OR CommandLine="*.docx.exe*" OR CommandLine="*.docx.rar*")) )
+| table _time host User EventCode Image TargetFilename TargetObject Details CommandLine
+| sort - _time
+
+```
+ NOTES
+ - Searches 1, 3, 4 are durable behaviors; 2 and the atomic side of 5 churn.
+ - DNS search (1) needs verbose DNS logging (Sysmon EventCode 22, Zeek dns.log,
+   or resolver logs). The foreach-label trick finds the longest DNS label;
+   simplify with `eval qlen=len(q) | where qlen>=60` if foreach is unavailable.
+==============================================================================
+```
