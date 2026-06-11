@@ -1,5 +1,3 @@
-# cti-sector-threat-briefings
-
 # CTI Sector Threat Briefings
 
 > **TLP:CLEAR** — May be shared without restriction. Compiled from open-source intelligence. Validate all indicators, CVEs, and attributions against the original CISA / FBI / NSA / NIST advisories before operational use.
