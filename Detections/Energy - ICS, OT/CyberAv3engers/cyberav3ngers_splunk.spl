@@ -1,0 +1,91 @@
+```
+==============================================================================
+ CyberAv3ngers (IRGC-CEC) — Splunk SPL detections
+ Covers: Unitronics PLC/HMI initial access + IOCONTROL (OrpaCrab) C2
+ Sources: CISA AA23-335A; Claroty Team82 "Inside a New OT/IoT Cyberweapon: IOCONTROL"
+ IOC validity: atomic C2 indicators date to 2023-2024 and are likely dead/sinkholed.
+              Use them for RETRO-HUNTING; rely on the behavioral searches going forward.
+ Field model: assumes Splunk CIM (Network_Traffic, Network_Resolution, Web) data models.
+              Adjust index=, sourcetype=, and field names to your environment.
+==============================================================================
+```
+
+```
+------------------------------------------------------------------------------
+ 1. INITIAL ACCESS — Inbound connections to internet-exposed Unitronics PLCs
+    Unitronics Vision PLC/HMI listen on PCOM over TCP/20256. These devices
+    should never be reachable from the public internet. (CISA AA23-335A)
+    Behavioral — durable. Tune the internal CIDR list to your OT ranges.
+------------------------------------------------------------------------------
+```
+index=network OR index=firewall sourcetype=*
+  (dest_port=20256 OR dest_port=20257)
+| where NOT cidrmatch("10.0.0.0/8", src_ip)
+    AND NOT cidrmatch("172.16.0.0/12", src_ip)
+    AND NOT cidrmatch("192.168.0.0/16", src_ip)
+| stats count min(_time) as first_seen max(_time) as last_seen
+        values(dest_ip) as plc_targets dc(dest_ip) as target_count by src_ip
+| convert ctime(first_seen) ctime(last_seen)
+| sort - count
+
+```
+------------------------------------------------------------------------------
+ 2. IOCONTROL C2 — known atomic indicators (RETRO-HUNT)
+    C2 domain: tylarion867mino[.]com  (FQDN seen: uuokhhfsdlk.tylarion867mino[.]com)
+    C2 IP:     159.100.6.69
+    Searches DNS resolution, web/proxy, and raw network traffic together.
+------------------------------------------------------------------------------
+```
+(index=dns OR index=network OR index=proxy OR index=web)
+  ( query="*tylarion867mino*" OR url="*tylarion867mino*"
+    OR dest_ip="159.100.6.69" OR dest="159.100.6.69" OR answer="159.100.6.69" )
+| stats count min(_time) as first_seen max(_time) as last_seen
+        values(sourcetype) as sources values(query) as queries values(dest_ip) as dest_ips
+        by host src_ip
+| convert ctime(first_seen) ctime(last_seen)
+
+```
+------------------------------------------------------------------------------
+ 3. IOCONTROL C2 CHANNEL — MQTT to an external broker (BEHAVIORAL)
+    IOCONTROL disguises C2 as MQTT (TCP/1883 cleartext, 8883 TLS).
+    OT/embedded devices talking MQTT to a PUBLIC IP is the signal. Tune the
+    src ranges to your OT/IoT segments and allow-list any legitimate broker.
+------------------------------------------------------------------------------
+```
+index=network OR index=firewall
+  (dest_port=1883 OR dest_port=8883)
+| where NOT cidrmatch("10.0.0.0/8", dest_ip)
+    AND NOT cidrmatch("172.16.0.0/12", dest_ip)
+    AND NOT cidrmatch("192.168.0.0/16", dest_ip)
+| search NOT [ | inputlookup approved_mqtt_brokers.csv | fields dest_ip ]
+| stats count min(_time) as first_seen max(_time) as last_seen
+        values(dest_ip) as brokers by src_ip
+| convert ctime(first_seen) ctime(last_seen)
+| where count > 0
+
+```
+------------------------------------------------------------------------------
+ 4. DEFENSE EVASION — DNS-over-HTTPS from OT/server hosts (HUNT, higher FP)
+    IOCONTROL resolves its C2 via DoH (Cloudflare 1.1.1.1/dns-query) to avoid
+    plaintext DNS. DoH is legitimate on user endpoints, so scope this to hosts
+    that should NOT be doing DoH (OT segment, servers, embedded gateways).
+------------------------------------------------------------------------------
+```
+index=network OR index=proxy OR index=web
+  (dest_ip="1.1.1.1" OR dest_ip="1.0.0.1" OR dest_ip="8.8.8.8" OR dest_ip="8.8.4.4")
+  (uri_path="*/dns-query*" OR url="*dns-query*" OR http_user_agent="*dns*")
+| where [ | inputlookup ot_and_server_hosts.csv | fields src_ip ]
+| stats count min(_time) as first_seen max(_time) as last_seen
+        values(dest_ip) as doh_resolvers by src_ip
+| convert ctime(first_seen) ctime(last_seen)
+
+```
+------------------------------------------------------------------------------
+ NOTES
+ - Searches 1, 3, 4 are behavioral and remain useful after the atomic IOCs die.
+ - Replace lookup files (approved_mqtt_brokers.csv, ot_and_server_hosts.csv)
+   with your asset inventory, or inline the CIDRs.
+ - For OT visibility you will usually need a network sensor (Zeek/NDR, Dragos,
+   Nozomi, Defender for IoT) feeding Splunk; endpoint agents rarely run on PLCs.
+==============================================================================
+```
