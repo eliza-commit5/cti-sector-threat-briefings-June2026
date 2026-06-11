@@ -156,27 +156,50 @@ The clearest near-term wins compress the research-to-detection pipeline. Concret
 ## Repository structure
 
 ```
-.
-├── README.md                              # This briefing (the showcase)
-├── LICENSE                                # MIT (code) — see License section                          
-├── reports/
-│   ├── CTI_Sector_Threat_Briefing.pdf     # Renders inline on GitHub
+├── README.md                                   # This briefing (the showcase)
+├── LICENSE                                     # MIT (code) — see License section
+├── LICENSE-CC-BY-4.0.md                        # CC-BY-4.0 (written reports/briefings)                             
+│
+├── reports/       
 │   └── CTI_Sector_Threat_Briefing.docx
-└── iocs/
-    ├── salt-typhoon-cves.csv              # Machine-readable CVE list
-    └── salt-typhoon-iosxe.sigma           # Starter detection rule
+│
+└── detections/                                 # Per-actor detection packs (SPL / KQL / YARA)
+    ├── cyberav3ngers/                          # Energy/ICS — IRGC-CEC
+    │   ├── README.md
+    │   ├── cyberav3ngers_splunk.spl
+    │   ├── cyberav3ngers_defender.kql
+    │   └── iocontrol_orpacrab.yar
+    ├── sandworm/                               # Energy/ICS — GRU Unit 74455 / APT44
+    │   ├── README.md
+    │   ├── sandworm_splunk.spl
+    │   ├── sandworm_defender.kql
+    │   └── frostygoop.yar
+    ├── apt34/                                  # Energy/Gov — OilRig (MOIS)
+    │   ├── README.md
+    │   ├── apt34_splunk.spl
+    │   ├── apt34_defender.kql
+    │   └── veaty_spearal.yar
+    ├── volt_typhoon/                           # Critical infra — PRC (VOLTZITE)
+    │   ├── README.md
+    │   ├── volt_typhoon_splunk.spl
+    │   ├── volt_typhoon_defender.kql
+    │   └── volt_typhoon_tooling.yar
+    ├── salt_typhoon/                           # ISP/Telecom — PRC (Earth Estries)
+    │   ├── README.md
+    │   ├── salt_typhoon_splunk.spl
+    │   ├── salt_typhoon_defender.kql
+    │   └── salt_typhoon_malware.yar
+    └── quantum/                                # Quantum — APT41 IP theft + HNDL
+        ├── README.md
+        ├── apt41_splunk.spl
+        ├── apt41_defender.kql
+        ├── apt41_malware.yar
+        ├── quantum_data_exfil_splunk.spl
+        ├── quantum_data_exfil_defender.kql
+        └── quantum_crypto_posture.md
 ```
 
----
 
-## Using the IOCs
-
-The `iocs/` directory provides machine-readable artifacts so you can operationalize this briefing rather than just read it:
-
-- `salt-typhoon-cves.csv` — import into a spreadsheet, vulnerability tracker, or enrichment pipeline.
-- `salt-typhoon-iosxe.sigma` — a starting detection for the Cisco IOS XE web UI "double encoding" evasion tell. **Tune and test against your own telemetry before deploying** — treat it as a hunting hypothesis, not a production rule.
-
----
 
 ## License
 
