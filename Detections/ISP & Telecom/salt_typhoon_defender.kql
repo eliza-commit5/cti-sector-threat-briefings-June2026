@@ -1,0 +1,87 @@
+// =============================================================================
+// Salt Typhoon — Microsoft Defender XDR / Sentinel KQL
+// Aliases: OPERATOR PANDA, RedMike, Earth Estries, GhostEmperor, FamousSparrow,
+//          UNC2286 / UNC5807. PRC espionage vs. telecom/ISP backbones.
+// Author: Eliza / elizacommit5
+// Sources: CISA AA25-239A; Trend Micro "Game of Emperor"; Cisco Talos;
+//          Kaspersky (Demodex); ESET (FamousSparrow/SparrowDoor).
+//
+// NOTE: the CORE Salt Typhoon activity is on NETWORK DEVICES (Cisco IOS XE,
+// edge gear) — push that syslog/web/AAA into Sentinel for queries 1-2. Windows
+// malware (GhostSpider/Demodex/SnappyBee) + Exchange exploitation cover the rest.
+// =============================================================================
+
+
+// -----------------------------------------------------------------------------
+// 1. IOS XE WEB UI — percent-encoding evasion (NETWORK; Sentinel custom logs)
+//    Adjust table/fields to your network-device or proxy log source.
+// -----------------------------------------------------------------------------
+// Example against a Syslog/CommonSecurityLog or custom web-device table:
+CommonSecurityLog
+| where TimeGenerated > ago(30d)
+| where RequestURL has_any ("%77eb%75i", "%77sma", "%2577eb%2575i", "%2577sma", "webui_wsma_http")
+| project TimeGenerated, DeviceName=DeviceVendor, SourceIP, DestinationIP, RequestURL
+| sort by TimeGenerated desc
+
+
+// -----------------------------------------------------------------------------
+// 2. KNOWN C2 INDICATORS (RETRO-HUNT)   <-- optionally ADD VERIFIED HASHES
+//    GhostSpider C2 141.255.164[.]98; typo-squat cert SAN palloaltonetworks[.]com
+// -----------------------------------------------------------------------------
+let c2_ips = dynamic(["141.255.164.98"]);
+let c2_strs = dynamic(["palloaltonetworks"]);
+let st_hashes = dynamic([ /* "PASTE_SHA256_FROM_TRENDMICRO_KASPERSKY_ESET" */ ]);
+union
+( DeviceNetworkEvents
+  | where Timestamp > ago(180d)
+  | where RemoteIP in (c2_ips) or RemoteUrl has_any (c2_strs)
+  | project Timestamp, DeviceName, RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName ),
+( union DeviceFileEvents, DeviceProcessEvents, DeviceImageLoadEvents
+  | where Timestamp > ago(180d)
+  | where SHA256 in (st_hashes)
+  | project Timestamp, DeviceName, FileName, FolderPath, SHA256, InitiatingProcessCommandLine )
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 3. EXCHANGE / EDGE EXPLOITATION -> webshell (WINDOWS, BEHAVIORAL)
+//    Initial access via Ivanti/Fortinet/Sophos/Exchange CVEs.
+//    Durable tell: IIS worker spawning a shell.
+// -----------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where InitiatingProcessFileName =~ "w3wp.exe"
+| where FileName in~ ("cmd.exe","powershell.exe","pwsh.exe","net.exe","net1.exe","whoami.exe","cscript.exe","nltest.exe")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 4. DEMODEX ROOTKIT — anomalous kernel driver / service load (WINDOWS, HUNT)
+//    Demodex is a kernel-mode rootkit installed via a loader + service. Hunt
+//    for newly-registered drivers / unusual service-creation as a lead, then
+//    confirm with hashes (query 2).
+// -----------------------------------------------------------------------------
+DeviceEvents
+| where Timestamp > ago(30d)
+| where ActionType in ("DriverLoad", "KernelDriverLoad")
+     or (ActionType == "ServiceInstalled")
+| where not(InitiatingProcessFileName in~ ("services.exe","msiexec.exe","TrustedInstaller.exe"))
+     or FolderPath has_any (@"\Windows\Temp\", @"\ProgramData\", @"\Users\Public\")
+| project Timestamp, DeviceName, ActionType, FileName, FolderPath, SHA256, InitiatingProcessFileName
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 5. SIGN-IN ANOMALY — stolen-credential logins (Sentinel / Entra)
+//    Talos: nearly all Salt Typhoon initial access used valid stolen creds.
+//    Surface privileged accounts authenticating from rare IPs/ASNs.
+// -----------------------------------------------------------------------------
+SigninLogs
+| where TimeGenerated > ago(30d)
+| where ResultType == 0
+| summarize Logons = count(), IPs = make_set(IPAddress, 30),
+            Countries = make_set(LocationDetails.countryOrRegion, 15)
+        by UserPrincipalName, AppDisplayName
+| where array_length(Countries) > 1
+| sort by Logons desc
