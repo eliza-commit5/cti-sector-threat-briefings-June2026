@@ -1,0 +1,73 @@
+// =============================================================================
+// Sandworm (GRU Unit 74455 / APT44) — Microsoft Defender XDR / Sentinel KQL
+// Focus: destructive OT/ICS toolset
+//   - FrostyGoop / BUSTLEBERM (Go-compiled, Modbus TCP/502) — Dragos / Unit 42
+//   - Industroyer2 (IEC 60870-5-104, TCP/2404) — ESET / CERT-UA
+// Author: "Eliza / eliza-commit5"
+//
+// SCOPING: FrostyGoop is typically staged on a Windows engineering workstation
+// that then speaks Modbus into OT, so endpoint (DeviceProcessEvents) coverage IS
+// useful here — unlike a pure-PLC actor. IEC-104/Modbus network detections still
+// need Defender for IoT or firewall logs in Sentinel.
+// =============================================================================
+
+
+// -----------------------------------------------------------------------------
+// 1. FROSTYGOOP — known file hashes (RETRO-HUNT)   <-- ADD VERIFIED HASHES
+//    Paste SHA-256 values from the Dragos / Unit 42 IOC appendices below.
+// -----------------------------------------------------------------------------
+let frostygoop_hashes = dynamic([
+    // "PASTE_SHA256_FROM_DRAGOS_OR_UNIT42_HERE"
+]);
+union DeviceProcessEvents, DeviceFileEvents, DeviceImageLoadEvents
+| where Timestamp > ago(180d)
+| where SHA256 in (frostygoop_hashes)
+| project Timestamp, DeviceName, ActionType, FileName, FolderPath, SHA256,
+          InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 2. FROSTYGOOP — process behaving like the Modbus tool (BEHAVIORAL HUNT)
+//    Go-compiled binary invoked with Modbus/target arguments or a JSON task
+//    config. The struct/field names ('TaskList','Iplist') and a :502 target
+//    are characteristic. Tune to reduce FPs from legitimate Modbus tooling.
+// -----------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where ProcessCommandLine has_any ("502", "Iplist", "TaskList", "modbus", ".json")
+| where ProcessCommandLine has "502" or ProcessCommandLine has_any ("Iplist","TaskList")
+| project Timestamp, DeviceName, AccountName, FileName, FolderPath,
+          ProcessCommandLine, SHA256
+| sort by Timestamp desc
+
+
+// -----------------------------------------------------------------------------
+// 3. OT-PROTOCOL TRAFFIC from Windows hosts that should not speak it (HUNT)
+//    Modbus (502) or IEC 60870-5-104 (2404) originating from an IT/engineering
+//    host is highly abnormal. Allow-list sanctioned masters/historians.
+// -----------------------------------------------------------------------------
+let approved_masters = dynamic([]);   // add sanctioned HMI/SCADA/historian IPs
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemotePort in (502, 2404)
+| where LocalIP !in (approved_masters)
+| summarize Count = count(), FirstSeen = min(Timestamp), LastSeen = max(Timestamp),
+          Targets = make_set(RemoteIP, 50) by DeviceName, LocalIP, RemotePort,
+          InitiatingProcessFileName
+| sort by Count desc
+
+
+// -----------------------------------------------------------------------------
+// 4. DESTRUCTIVE STAGING — shadow-copy / boot-config tampering (BEHAVIORAL)
+//    Sandworm pairs ICS effects with wipers (CaddyWiper, etc.). Catch the
+//    common pre-wipe / anti-recovery steps on Windows hosts.
+// -----------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where (FileName in~ ("vssadmin.exe","wmic.exe") and ProcessCommandLine has_any ("delete shadows","shadowcopy delete"))
+     or (FileName =~ "bcdedit.exe" and ProcessCommandLine has_any ("recoveryenabled no","bootstatuspolicy ignoreallfailures"))
+     or (FileName =~ "wevtutil.exe" and ProcessCommandLine has "cl ")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine,
+          InitiatingProcessFileName
+| sort by Timestamp desc
