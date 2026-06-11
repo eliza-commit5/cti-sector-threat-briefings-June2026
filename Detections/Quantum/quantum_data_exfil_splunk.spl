@@ -1,0 +1,105 @@
+```
+==============================================================================
+ Quantum vertical — Data Exfiltration & Harvest-Now-Decrypt-Later (HNDL) — SPL
+ Covers BOTH quantum threat models:
+   (A) IP THEFT of quantum R&D — mass access, staging, archive, cloud/USB exfil
+   (B) HNDL "harvest" — bulk encrypted egress + inventory of quantum-vulnerable
+       cryptography (what an adversary could collect now and decrypt later)
+ Author: Eliza / eliza-commit5
+ Sources: NIST FIPS 203/204/205, IR 8547; NSA CNSA 2.0; CISA/NSA/NIST PQC
+          guidance. Behavioral — actor-agnostic by design (insiders + APTs).
+ NOTE: tune all thresholds to your baseline; these surface candidates to triage.
+==============================================================================
+```
+
+```
+------------------------------------------------------------------------------
+ A1. MASS SENSITIVE-FILE ACCESS by one user in a short window (STAGING)
+     Pre-exfil collection of research IP. Scope to R&D file shares / repos.
+     Requires file-access auditing (Windows 4663 / file-server audit / DLP).
+------------------------------------------------------------------------------
+```
+index=fileaudit (EventCode=4663 OR action=read)
+  (Object_Name="*\\Research\\*" OR Object_Name="*\\R&D\\*" OR Object_Name="*\\quantum*" OR share="*research*")
+| bin _time span=1h
+| stats dc(Object_Name) as files_touched values(Object_Name) as sample by user host _time
+| where files_touched > 200
+| sort - files_touched
+
+```
+------------------------------------------------------------------------------
+ A2. ENCRYPTED ARCHIVE CREATION before exfil (STAGING)
+     rar/7z/zip with password/compression — classic pre-exfil packaging.
+------------------------------------------------------------------------------
+```
+index=endpoint (sourcetype=sysmon OR source="*Sysmon*") EventCode=1
+  ( Image IN ("*\\rar.exe","*\\winrar.exe","*\\7z.exe","*\\7za.exe")
+    OR (CommandLine="*Compress-Archive*") )
+  (CommandLine="*-p*" OR CommandLine="*-hp*" OR CommandLine="*a *" OR CommandLine="*-r *")
+| table _time host User Image CommandLine
+| sort - _time
+
+```
+------------------------------------------------------------------------------
+ A3. EXFIL CHANNELS — personal cloud upload / USB mass copy (EXFIL)
+------------------------------------------------------------------------------
+```
+index=proxy OR index=web
+  (url="*mega.nz*" OR url="*dropbox.com/upload*" OR url="*drive.google.com*"
+   OR url="*wetransfer*" OR url="*anonfiles*" OR url="*pcloud*")
+  http_method IN ("POST","PUT")
+| stats sum(bytes_out) as bytes_out count by user host dest_host
+| where bytes_out > 104857600   /* >100 MB */
+| sort - bytes_out
+``` (companion — USB mass file write, Sysmon EID 11 to removable media) ```
+
+```
+------------------------------------------------------------------------------
+ B1. BULK ENCRYPTED EGRESS to a rare external destination (HNDL HARVEST)
+     The "harvest" step: large encrypted outbound transfers. An adversary
+     collecting ciphertext for future quantum decryption looks like sustained
+     high-volume egress to new/rare destinations. Needs flow logs (Zeek/NetFlow).
+------------------------------------------------------------------------------
+```
+index=network (sourcetype=zeek:conn OR sourcetype=netflow OR sourcetype=firewall)
+  (dest_port=443 OR dest_port=22 OR service=ssl OR service=ssh)
+| where NOT cidrmatch("10.0.0.0/8", dest_ip)
+    AND NOT cidrmatch("172.16.0.0/12", dest_ip)
+    AND NOT cidrmatch("192.168.0.0/16", dest_ip)
+| stats sum(bytes_out) as bytes_out dc(dest_ip) as dests min(_time) as first_seen max(_time) as last_seen
+        by src_ip dest_ip
+| where bytes_out > 1073741824   /* >1 GB to a single external peer */
+| search NOT [ | inputlookup approved_egress_dests.csv | fields dest_ip ]
+| convert ctime(first_seen) ctime(last_seen)
+| sort - bytes_out
+
+```
+------------------------------------------------------------------------------
+ B2. QUANTUM-VULNERABLE CRYPTOGRAPHY in use (HNDL EXPOSURE INVENTORY)
+     Not an attack — an EXPOSURE hunt. Inventory TLS/SSH sessions still using
+     quantum-breakable key exchange / signatures (RSA, ECDHE, ECDSA, DH, DSA).
+     Data protected only by these today is harvestable now / decryptable later.
+     Prioritize remediation by data confidentiality lifetime. Needs Zeek ssl.log
+     / ssh.log (cipher + key-exchange fields).
+------------------------------------------------------------------------------
+```
+index=network (sourcetype=zeek:ssl OR sourcetype=zeek:ssh)
+| eval qvuln=case(
+      match(cipher,"(?i)(RSA|ECDHE|ECDH|_DHE_|_DH_|ECDSA|DSA)"), "tls_quantum_vulnerable",
+      match(kex_alg,"(?i)(ecdh|diffie-hellman|rsa)"), "ssh_quantum_vulnerable",
+      1==1, "other")
+| where qvuln!="other"
+| stats count dc(id_resp_h) as servers values(cipher) as ciphers by src_ip qvuln
+| sort - count
+``` (any session NOT negotiating a PQC/hybrid KEM such as ML-KEM / X25519MLKEM768
+    is, by definition, harvestable today — treat this as a migration backlog) ```
+
+```
+ NOTES
+ - A1-A3 detect the human/insider + hands-on-keyboard exfil of R&D IP.
+ - B1 detects the HNDL "harvest"; B2 inventories your HNDL EXPOSURE (what is
+   still protected by quantum-breakable crypto). See quantum_crypto_posture.md
+   in this folder for the migration framing, NIST timeline, and CBOM guidance.
+ - Replace lookups (approved_egress_dests.csv) with your egress allow-list.
+==============================================================================
+```
