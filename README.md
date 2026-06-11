@@ -158,8 +158,7 @@ The clearest near-term wins compress the research-to-detection pipeline. Concret
 ```
 .
 ├── README.md                              # This briefing (the showcase)
-├── LICENSE                                # MIT (code) — see License section
-├── CHANGELOG.md                           # Date-stamped updates
+├── LICENSE                                # MIT (code) — see License section                          
 ├── reports/
 │   ├── CTI_Sector_Threat_Briefing.pdf     # Renders inline on GitHub
 │   └── CTI_Sector_Threat_Briefing.docx
