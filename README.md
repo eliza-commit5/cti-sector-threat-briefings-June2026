@@ -1,4 +1,4 @@
-# CTI Sector Threat Briefings
+# CTI Sector Threat Briefings June 2026
 
 > **TLP:CLEAR** — May be shared without restriction. Compiled from open-source intelligence. Validate all indicators, CVEs, and attributions against the original CISA / FBI / NSA / NIST advisories before operational use.
 
