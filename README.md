@@ -17,7 +17,7 @@ Maintained by **Eliza / eliza-commit5**. Contributions, corrections, and source 
 
 ## Contents
 
-- [Full briefing (Word / .docx)](Reports/CTI_Sector_Threat_Briefing.docx)
+- [Full briefing](Reports/CTI_Sector_Threat_Briefing.docx)
 - [Executive summary](#executive-summary)
 - [1. Energy / ICS-OT](#1-energy--ics-ot)
 - [2. ISP / Telecom](#2-isp--telecom)
@@ -35,7 +35,7 @@ Maintained by **Eliza / eliza-commit5**. Contributions, corrections, and source 
 
 The full briefing is available as downloadable documents:
 
-- [Full briefing (Word / .docx)](reports/CTI_Sector_Threat_Briefing.docx)
+- [Full briefing](reports/CTI_Sector_Threat_Briefing.docx)
 
 The sections below reproduce the briefing content so you can read it without leaving the page.
 
