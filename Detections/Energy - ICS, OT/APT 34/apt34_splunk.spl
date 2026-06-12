@@ -1,4 +1,5 @@
-/*
+```
+==============================================================================
 APT34 / OilRig (MOIS) — Splunk SPL detections
  Tracked as: OilRig, Helix Kitten, Earth Simnavaz, Cobalt Gypsy, GreenBug
  Signature tradecraft: DNS-tunneling C2, Exchange/EWS email C2, passive IIS
