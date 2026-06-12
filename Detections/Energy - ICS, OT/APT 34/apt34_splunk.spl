@@ -1,4 +1,4 @@
-```
+
 ==============================================================================
 # APT34 / OilRig (MOIS) — Splunk SPL detections
  Tracked as: OilRig, Helix Kitten, Earth Simnavaz, Cobalt Gypsy, GreenBug
@@ -9,7 +9,6 @@
           ESET/Symantec (IIS Group2/GreenBug); Trustwave; MITRE G0049.
  NOTE: adjust index/sourcetype/field names to your environment.
 ==============================================================================
-```
 
 ```
 ------------------------------------------------------------------------------
