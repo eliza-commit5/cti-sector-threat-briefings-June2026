@@ -8,7 +8,8 @@ APT34 / OilRig (MOIS) — Splunk SPL detections
  Sources: Check Point Research (Veaty/Spearal, 2024); Fortinet (Saitama, 2022);
           ESET/Symantec (IIS Group2/GreenBug); Trustwave; MITRE G0049.
  NOTE: adjust index/sourcetype/field names to your environment.
-*/
+==============================================================================
+```
 
 ```
 ------------------------------------------------------------------------------
