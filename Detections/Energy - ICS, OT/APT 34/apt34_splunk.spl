@@ -1,3 +1,4 @@
+/*
 ```
 ------------------------------------------------------------------------------
 
@@ -11,7 +12,7 @@ APT34 / OilRig (MOIS) — Splunk SPL detections
  NOTE: adjust index/sourcetype/field names to your environment.
 ------------------------------------------------------------------------------
 ```
-
+/*
 ```
 ------------------------------------------------------------------------------
 # 1. DNS TUNNELING — long / high-entropy subdomains, TXT-heavy (BEHAVIORAL)
